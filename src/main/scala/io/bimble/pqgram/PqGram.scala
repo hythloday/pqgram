@@ -1,6 +1,7 @@
 package io.bimble.pqgram
 
 import scala.reflect.runtime.universe._
+import scala.util.{Failure, Success}
 import scalax.collection.GraphEdge._
 import scalax.collection.GraphPredef._
 import scalax.collection.config.GraphConfig
@@ -48,11 +49,15 @@ trait PqExtender[N] {
     i <- 0 until q
   } yield leaf ~> nullNodes.create
 
-  private def extendNonLeafNode(node: DAG[N]#NodeT, q: Int)(implicit nullNodes: CreatableOrdering[N]) = for {
+  private def extendNonLeafNode(node: DAG[N]#NodeT, q: Int)(implicit nullNodes: CreatableOrdering[N]) =  for {
     side <- List("before", "after")
-    i <- 0 until q-1
-  } yield if (side == "before") { node.value ~> nullNodes.createLessThan(node.diSuccessors.map(_.value).min) }
-          else                  { node.value ~> nullNodes.createGreaterThan(node.diSuccessors.map(_.value).max) }
+    i <- 0 until q - 1
+  } yield (side, node.diSuccessors.toSeq) match {
+    case ("before", Seq()) => node.value ~> nullNodes.create
+    case ("before", xs) => node.value ~> nullNodes.createLessThan(xs.map(_.value).min)
+    case ("after", Seq()) => node.value ~> nullNodes.create
+    case ("after", xs) => node.value ~> nullNodes.createGreaterThan(xs.map(_.value).max)
+  }
 
   /**
     * Definition 4.1 (pq-Extended Tree) Let T be a tree, and p > 0 and q > 0
@@ -121,9 +126,10 @@ trait PqGramDistance[N] {
     *                      |Pp,q(T1) ∪ Pp,q(T2)|
     */
   // TODO O(n^2) implementation, could be O(n)
-  def distance(lt1: Seq[String], l2: Seq[String]): Double = {
-    val unionSize = lt1 count (l2 contains _)
-    val intersectionSize = lt1.size + l2.size
+  def distance(lt1: Seq[String], lt2: Seq[String]): Double = {
+    val (kv1, kv2) = (lt1.groupBy(identity).mapValues(_.size), lt2.groupBy(identity).mapValues(_.size))
+    val unionSize = (kv1.keySet & kv2.keySet).toSeq.map(k => math.min(kv1(k), kv2(k))).sum
+    val intersectionSize = lt1.size + lt2.size
     val d = 1 - 2 * (unionSize.toDouble / intersectionSize.toDouble)
     d
   }
