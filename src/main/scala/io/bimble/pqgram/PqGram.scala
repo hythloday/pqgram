@@ -1,7 +1,6 @@
 package io.bimble.pqgram
 
 import scala.reflect.runtime.universe._
-import scala.util.{Failure, Success}
 import scalax.collection.GraphEdge._
 import scalax.collection.GraphPredef._
 import scalax.collection.config.GraphConfig
@@ -24,6 +23,12 @@ trait CreatableOrdering[N] extends Ordering[N] {
 
 case class PQGram[N](t: DAG[N], p: Int, q: Int) {
   import Implicits._
+
+  /**
+    * Definition 4.3 (pq-Gram) For p > 0 and q > 0, a pq-gram of a tree T is defined as a subtree of the
+    * extended tree Tpq that is isomorphic to the pq-gram pattern.
+    * @return
+    */
   def subgraphs(implicit tt: TypeTag[N], ord: Ordering[N]): Seq[DAG[N]] = t.nodes.toSeq.flatMap { node =>
     for {
       ancs <- node.diPredecessors.toSeq.sortBy(_.value).sliding(p - 1)
@@ -36,27 +41,23 @@ case class PQGram[N](t: DAG[N], p: Int, q: Int) {
   }
 }
 
-/**
-  *
-  * @tparam N the node type of the tree
-  */
-trait PqExtender[N] {
-  private def extendRootNode(root: N, p: Int)(implicit nullNodes: CreatableOrdering[N]) = for {
+trait PqGramOps {
+  private def extendRootNode[N : CreatableOrdering](root: N, p: Int) = for {
     i <- 0 until p - 1
-  } yield nullNodes.create ~> root
+  } yield implicitly[CreatableOrdering[N]].create ~> root
 
-  private def extendLeafNode(leaf: N, q: Int)(implicit nullNodes: CreatableOrdering[N]) = for {
+  private def extendLeafNode[N : CreatableOrdering](leaf: N, q: Int) = for {
     i <- 0 until q
-  } yield leaf ~> nullNodes.create
+  } yield leaf ~> implicitly[CreatableOrdering[N]].create
 
-  private def extendNonLeafNode(node: DAG[N]#NodeT, q: Int)(implicit nullNodes: CreatableOrdering[N]) =  for {
+  private def extendNonLeafNode[N : CreatableOrdering](node: DAG[N]#NodeT, q: Int) = for {
     side <- List("before", "after")
     i <- 0 until q - 1
   } yield (side, node.diSuccessors.toSeq) match {
-    case ("before", Seq()) => node.value ~> nullNodes.create
-    case ("before", xs) => node.value ~> nullNodes.createLessThan(xs.map(_.value).min)
-    case ("after", Seq()) => node.value ~> nullNodes.create
-    case ("after", xs) => node.value ~> nullNodes.createGreaterThan(xs.map(_.value).max)
+    case ("before", Seq()) => node.value ~> implicitly[CreatableOrdering[N]].create
+    case ("before", xs) => node.value ~> implicitly[CreatableOrdering[N]].createLessThan(xs.map(_.value).min)
+    case ("after", Seq()) => node.value ~> implicitly[CreatableOrdering[N]].create
+    case ("after", xs) => node.value ~> implicitly[CreatableOrdering[N]].createGreaterThan(xs.map(_.value).max)
   }
 
   /**
@@ -72,51 +73,26 @@ trait PqExtender[N] {
     * @param q add q children to each leaf node in t
     * @return the extended tree
     */
-  def extend(tree: DAG[N], p: Int, q: Int)(implicit nullNodes: CreatableOrdering[N]): PQGram[N] = PQGram(tree ++ tree.nodes.foldLeft(List.empty[DiEdge[N]]) {
+  def extend[N : CreatableOrdering](tree: DAG[N], p: Int, q: Int): PQGram[N] = PQGram(tree ++ tree.nodes.foldLeft(List.empty[DiEdge[N]]) {
     case (nodes, root) if root.diPredecessors.isEmpty =>
-      nodes ++ extendRootNode(root, p) ++ extendNonLeafNode(root, q)
+      nodes ++ extendRootNode(root.value, p) ++ extendNonLeafNode(root, q)
     case (nodes, leaf) if leaf.diSuccessors.isEmpty =>
-      nodes ++ extendLeafNode(leaf, q)
+      nodes ++ extendLeafNode(leaf.value, q)
     case (nodes, node) =>
       nodes ++ extendNonLeafNode(node, q)
   }, p, q)
-}
 
-trait PqSubgraph[N] {
-  import Implicits._
-  /**
-    * Definition 4.3 (pq-Gram) For p > 0 and q > 0, a pq-gram of a tree T is defined as a subtree of the
-    * extended tree Tpq that is isomorphic to the pq-gram pattern.
-    *
-    * @param pq the PQGram to retrieve all subtrees of
-    * @return all subtrees of the PQGram
-    */
-  def subgraphs(pq: PQGram[N])(implicit tt: TypeTag[N], ord: Ordering[N]): Seq[DAG[N]] = pq.t.nodes.toSeq.flatMap { node =>
-    for {
-      ancs <- node.diPredecessors.toSeq.sortBy(_.value).sliding(pq.p - 1)
-      descs <- node.diSuccessors.toSeq.sortBy(_.value).sliding(pq.q)
-    } yield {
-      val nodes = (ancs.toSet ++ descs.toSet + node).map(_.value)
-      val edges = ancs.map(_.value ~> node.value) ++ descs.map(node.value ~> _.value)
-      DAG.from(nodes, edges)
-    }
-  }
-}
-
-trait PqGramLabelTuple[N] {
   /**
     * Definition 4.4 (Label-tuple) Let G be a pq-gram with the nodes V (G) = {v1, ... , vp, vp+1, ... , vp+q}, where vi
     * is the i-th node in preorder. The tuple l(G) = (l(v1), ... , l(vp), l(vp+1), ... , l(vp+q)) is called the
     * label-tuple of G.
     */
-  def labelTuple(tree: DAG[N], root: N)(implicit ord: CreatableOrdering[N]): List[N] = {
+  def labelTuple[N : Labelled](tree: DAG[N], root: N)(implicit ord: CreatableOrdering[N]): List[String] = {
     def nodeOrdering = tree.NodeOrdering((l, r) => ord.compare(l.value, r.value))
     val traverser = tree.outerNodeTraverser(tree get root).withOrdering(nodeOrdering)
-    traverser.toList
+    traverser.toList.map(implicitly[Labelled[N]].label)
   }
-}
 
-trait PqGramDistance[N] {
   /**
     *
     * Definition 4.6 (pq-Gram Distance) For p > 0 and q > 0, the pq-gram distance, ∆p,q(T1, T2), between two trees
@@ -135,4 +111,4 @@ trait PqGramDistance[N] {
   }
 }
 
-case class PqOps[N]() extends PqExtender[N] with PqSubgraph[N] with PqGramLabelTuple[N] with PqGramDistance[N]
+case class PqOps[N]() extends PqGramOps

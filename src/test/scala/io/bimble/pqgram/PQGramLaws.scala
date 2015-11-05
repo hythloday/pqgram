@@ -15,6 +15,10 @@ case class Label(uuid: UUID, i: Int)
 
 class PQGramLaws extends PropSpec with Checkers {
 
+  implicit object NodeLabeller extends Labelled[Label] {
+    override def label(a: Label): String = a.i.toString
+  }
+
   import Implicits._
 
   val genLabel = for {
@@ -63,8 +67,8 @@ class PQGramLaws extends PropSpec with Checkers {
   property("symmetry") {
     check { (t1: DAG[Label], t2: DAG[Label], pq: PQ) =>
       val ops = PqOps[Label]()
-      val lt1 = ops.extend(t1, pq.p, pq.q).subgraphs.map(g => ops.labelTuple(g, g.root)).map(_.map(_.i).mkString("-"))
-      val lt2 = ops.extend(t2, pq.p, pq.q).subgraphs.map(g => ops.labelTuple(g, g.root)).map(_.map(_.i).mkString("-"))
+      val lt1 = ops.extend(t1, pq.p, pq.q).subgraphs.map(g => ops.labelTuple(g, g.root)).map(_.mkString("-"))
+      val lt2 = ops.extend(t2, pq.p, pq.q).subgraphs.map(g => ops.labelTuple(g, g.root)).map(_.mkString("-"))
       Prop(ops.distance(lt1, lt2) == ops.distance(lt2, lt1))
     }
   }
@@ -72,8 +76,8 @@ class PQGramLaws extends PropSpec with Checkers {
   property("metric bounds") {
     check { (t1: DAG[Label], t2: DAG[Label], pq: PQ) =>
       val ops = PqOps[Label]()
-      val lt1 = ops.extend(t1, pq.p, pq.q).subgraphs.map(g => ops.labelTuple(g, g.root)).map(_.map(_.i).mkString("-"))
-      val lt2 = ops.extend(t2, pq.p, pq.q).subgraphs.map(g => ops.labelTuple(g, g.root)).map(_.map(_.i).mkString("-"))
+      val lt1 = ops.extend(t1, pq.p, pq.q).subgraphs.map(g => ops.labelTuple(g, g.root)).map(_.mkString("-"))
+      val lt2 = ops.extend(t2, pq.p, pq.q).subgraphs.map(g => ops.labelTuple(g, g.root)).map(_.mkString("-"))
       val distance = ops.distance(lt1, lt2)
       Prop(distance >= 0 && distance <= 1)
     }
@@ -82,7 +86,7 @@ class PQGramLaws extends PropSpec with Checkers {
   property("identity") {
     check { (t1: DAG[Label], t2: DAG[Label], pq: PQ) =>
       val ops = PqOps[Label]()
-      val lt1 = ops.extend(t1, pq.p, pq.q).subgraphs.map(g => ops.labelTuple(g, g.root)).map(_.map(_.i).mkString("-"))
+      val lt1 = ops.extend(t1, pq.p, pq.q).subgraphs.map(g => ops.labelTuple(g, g.root)).map(_.mkString("-"))
       Prop(ops.distance(lt1, lt1) == 0)
     }
   }
@@ -90,9 +94,9 @@ class PQGramLaws extends PropSpec with Checkers {
   property("triangle inequality") {
     check { (t1: DAG[Label], t2: DAG[Label], t3: DAG[Label], pq: PQ) =>
       val ops = PqOps[Label]()
-      val lt1 = ops.extend(t1, pq.p, pq.q).subgraphs.map(g => ops.labelTuple(g, g.root)).map(_.map(_.i).mkString("-"))
-      val lt2 = ops.extend(t2, pq.p, pq.q).subgraphs.map(g => ops.labelTuple(g, g.root)).map(_.map(_.i).mkString("-"))
-      val lt3 = ops.extend(t3, pq.p, pq.q).subgraphs.map(g => ops.labelTuple(g, g.root)).map(_.map(_.i).mkString("-"))
+      val lt1 = ops.extend(t1, pq.p, pq.q).subgraphs.map(g => ops.labelTuple(g, g.root)).map(_.mkString("-"))
+      val lt2 = ops.extend(t2, pq.p, pq.q).subgraphs.map(g => ops.labelTuple(g, g.root)).map(_.mkString("-"))
+      val lt3 = ops.extend(t3, pq.p, pq.q).subgraphs.map(g => ops.labelTuple(g, g.root)).map(_.mkString("-"))
 
       Prop(ops.distance(lt1, lt3) <= ops.distance(lt1, lt2) + ops.distance(lt2, lt3))
     }
