@@ -14,14 +14,7 @@ object Implicits {
   }
 }
 
-trait CreatableOrdering[N] extends Ordering[N] {
-  override def compare(x: N, y: N): Int
-  def createLessThan(x: N): N
-  def createGreaterThan(x: N): N
-  def create: N
-}
-
-case class PQGram[N](t: DAG[N], p: Int, q: Int) {
+case class PQGram[N : CreatableOrdering : TypeTag : Labelled](t: DAG[N], p: Int, q: Int) {
   import Implicits._
 
   /**
@@ -29,7 +22,7 @@ case class PQGram[N](t: DAG[N], p: Int, q: Int) {
     * extended tree Tpq that is isomorphic to the pq-gram pattern.
     * @return
     */
-  def subgraphs(implicit tt: TypeTag[N], ord: Ordering[N]): Seq[DAG[N]] = t.nodes.toSeq.flatMap { node =>
+  def subgraphs: Seq[DAG[N]] = t.nodes.toSeq.flatMap { node =>
     for {
       ancs <- node.diPredecessors.toSeq.sortBy(_.value).sliding(p - 1)
       descs <- node.diSuccessors.toSeq.sortBy(_.value).sliding(q)
@@ -38,6 +31,30 @@ case class PQGram[N](t: DAG[N], p: Int, q: Int) {
       val edges = ancs.map(_.value ~> node.value) ++ descs.map(node.value ~> _.value)
       DAG.from(nodes, edges)
     }
+  }
+
+  def profile = PQProfile(subgraphs.map(g => PqExtended.labelTuple(g).mkString("")))
+}
+
+/**
+  * Definition 4.5 (pq-Gram Profile) For p > 0 and q > 0, the pq-gram profile, Pp,q(T), of a tree T is
+  *  defined as the bag of label-tuples l(Gi) of all pq-grams Gi of T.
+  */
+case class PQProfile(labelTuples: Seq[String]) {
+
+  private lazy val kv = labelTuples.groupBy(identity).mapValues(_.size)
+  /**
+    *
+    * Definition 4.6 (pq-Gram Distance) For p > 0 and q > 0, the pq-gram distance, ∆p,q(T1, T2), between two trees
+    * T1 and T2 is defined as follows:
+    *
+    * ∆p,q(T1, T2) = 1 − 2 |Pp,q(T1) ∩ Pp,q(T2)|
+    *                      |Pp,q(T1) ∪ Pp,q(T2)|
+    */
+  def distance(other: PQProfile): Double = {
+    val unionSize = (kv.keySet & other.kv.keySet).toSeq.map(k => math.min(kv(k), other.kv(k))).sum
+    val intersectionSize = labelTuples.size + other.labelTuples.size
+    1 - 2 * (unionSize.toDouble / intersectionSize.toDouble)
   }
 }
 
@@ -73,7 +90,7 @@ trait PqGramOps {
     * @param q add q children to each leaf node in t
     * @return the extended tree
     */
-  def extend[N : CreatableOrdering](tree: DAG[N], p: Int, q: Int): PQGram[N] = PQGram(tree ++ tree.nodes.foldLeft(List.empty[DiEdge[N]]) {
+  def apply[N : Labelled : CreatableOrdering : TypeTag](tree: DAG[N], p: Int, q: Int): PQGram[N] = PQGram(tree ++ tree.nodes.foldLeft(List.empty[DiEdge[N]]) {
     case (nodes, root) if root.diPredecessors.isEmpty =>
       nodes ++ extendRootNode(root.value, p) ++ extendNonLeafNode(root, q)
     case (nodes, leaf) if leaf.diSuccessors.isEmpty =>
@@ -87,28 +104,15 @@ trait PqGramOps {
     * is the i-th node in preorder. The tuple l(G) = (l(v1), ... , l(vp), l(vp+1), ... , l(vp+q)) is called the
     * label-tuple of G.
     */
-  def labelTuple[N : Labelled](tree: DAG[N], root: N)(implicit ord: CreatableOrdering[N]): List[String] = {
-    def nodeOrdering = tree.NodeOrdering((l, r) => ord.compare(l.value, r.value))
-    val traverser = tree.outerNodeTraverser(tree get root).withOrdering(nodeOrdering)
+  def labelTuple[N : Labelled : CreatableOrdering](tree: DAG[N]): List[String] = {
+    import Implicits._
+    def nodeOrdering = tree.NodeOrdering((l, r) => implicitly[Ordering[N]].compare(l.value, r.value))
+    val traverser = tree.outerNodeTraverser(tree get tree.root).withOrdering(nodeOrdering)
     traverser.toList.map(implicitly[Labelled[N]].label)
   }
 
-  /**
-    *
-    * Definition 4.6 (pq-Gram Distance) For p > 0 and q > 0, the pq-gram distance, ∆p,q(T1, T2), between two trees
-    * T1 and T2 is defined as follows:
-    *
-    * ∆p,q(T1, T2) = 1 − 2 |Pp,q(T1) ∩ Pp,q(T2)|
-    *                      |Pp,q(T1) ∪ Pp,q(T2)|
-    */
-  // TODO O(n^2) implementation, could be O(n)
-  def distance(lt1: Seq[String], lt2: Seq[String]): Double = {
-    val (kv1, kv2) = (lt1.groupBy(identity).mapValues(_.size), lt2.groupBy(identity).mapValues(_.size))
-    val unionSize = (kv1.keySet & kv2.keySet).toSeq.map(k => math.min(kv1(k), kv2(k))).sum
-    val intersectionSize = lt1.size + lt2.size
-    val d = 1 - 2 * (unionSize.toDouble / intersectionSize.toDouble)
-    d
-  }
+  def distance[N : Labelled : CreatableOrdering : TypeTag](t1: DAG[N], t2: DAG[N], p: Int, q: Int) =
+    apply(t1, p, q).profile.distance(apply(t2, p, q).profile)
 }
 
-case class PqOps[N]() extends PqGramOps
+object PqExtended extends PqGramOps

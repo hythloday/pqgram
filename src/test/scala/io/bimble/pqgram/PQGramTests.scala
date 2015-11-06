@@ -47,11 +47,22 @@ class PQGramTests extends FlatSpec with Matchers {
     override def label(a: TestNode): String = a.label
   }
 
+  implicit object StringLabeller extends Labelled[String] {
+    override def label(a: String): String = a
+  }
+
   implicit val ord = new CreatableOrdering[TestNode] {
     override def compare(x: TestNode, y: TestNode): Int = x.order compare y.order
     override def createLessThan(x: TestNode): TestNode = new NullNode(x.order - 1)
     override def createGreaterThan(x: TestNode): TestNode = new NullNode(x.order + 1)
     override def create: TestNode = new NullNode(0)
+  }
+
+  implicit val ordStr = new CreatableOrdering[String] {
+    override def compare(x: String, y: String): Int = x compare y
+    override def createLessThan(x: String): String = "-"
+    override def createGreaterThan(x: String): String = "+"
+    override def create: String = "*"
   }
 
   implicit val conf: Config = Connected && Acyclic
@@ -64,7 +75,7 @@ class PQGramTests extends FlatSpec with Matchers {
       List(v1, v2, v3, v4, v5, v6),
       List(v1 ~> v2, v1 ~> v5, v1 ~> v6, v2 ~> v3, v2 ~> v4)
     )
-    val tExtended = PqOps().extend(t, 2, 3)
+    val tExtended = PqExtended(t, 2, 3)
 
     val (o1, o2, o3, o4, o5, o6, o7, o8, o9, o10, o11, o12, o13, o14, o15, o16, o17, o18, o19, o20, o21) = (
       LabelledNode(1, "*"), LabelledNode(2, "*"), LabelledNode(3, "*"), LabelledNode(4, "*"), LabelledNode(5, "*"),
@@ -113,7 +124,7 @@ class PQGramTests extends FlatSpec with Matchers {
       List(o1 ~> v1, v1 ~> o2, v1 ~> o3, v1 ~> v2)
     )
 
-    new PqGramOps{}.labelTuple(t, o1).mkString shouldEqual "*a**a"
+    PqExtended.labelTuple(t).mkString shouldEqual "*a**a"
   }
 
   it should "give the same result on t1" in {
@@ -125,12 +136,7 @@ class PQGramTests extends FlatSpec with Matchers {
       List(v1 ~> v2, v1 ~> v5, v1 ~> v6, v2 ~> v3, v2 ~> v4)
     )
 
-    val xs = PqOps().extend(t1, 2, 3).subgraphs
-    val x = xs map { x: DAG[TestNode] =>
-      new PqGramOps{}.labelTuple(x, x.root)
-    }
-
-    x.map(_.mkString).sorted shouldEqual List(
+    PqExtended(t1, 2, 3).profile.labelTuples.sorted shouldEqual List(
       "*a**a", "aa**e", "ae***", "aa*eb", "ab***", "aaeb*", "aab**", "*a*ab", "ab***", "*aabc", "ac***", "*abc*", "*ac**"
     ).sorted
   }
@@ -144,12 +150,7 @@ class PQGramTests extends FlatSpec with Matchers {
       List(w5 ~> w1, w5 ~> w3, w5 ~> w6, w1 ~> w7, w1 ~> w9)
     )
 
-    val xs = PqOps().extend(t2, 2, 3).subgraphs
-    val x = xs map { x: DAG[TestNode] =>
-      new PqGramOps{}.labelTuple(x, x.root)
-    }
-
-    x.map(_.mkString).sorted shouldEqual List(
+    PqExtended(t2, 2, 3).profile.labelTuples.sorted shouldEqual List(
       "*a**a", "aa**e", "ae***", "aa*eb", "ab***", "aaeb*", "aab**", "*a*ab", "ab***", "*aabx", "ax***", "*abx*", "*ax**"
     ).sorted
   }
@@ -174,15 +175,10 @@ class PQGramTests extends FlatSpec with Matchers {
       List(w5 ~> w1, w5 ~> w3, w5 ~> w6, w1 ~> w7, w1 ~> w9)
     )
 
-    val ops = new PqGramOps{}
-    val (sg1, sg2) = (ops.extend(t1, 2, 3).subgraphs, ops.extend(t2, 2, 3).subgraphs)
+    val p1 = PqExtended(t1, 2, 3).profile
+    val p2 = PqExtended(t2, 2, 3).profile
 
-    val (lt1, lt2) = (
-      sg1.map(g => ops.labelTuple(g, g.root).mkString),
-      sg2.map(g => ops.labelTuple(g, g.root).mkString)
-    )
-
-    ops.distance(lt1, lt2) shouldBe > (0.305)
-    ops.distance(lt1, lt2) shouldBe <= (0.31)
+    p1.distance(p2) shouldBe > (0.305)
+    p1.distance(p2) shouldBe <= (0.31)
   }
 }

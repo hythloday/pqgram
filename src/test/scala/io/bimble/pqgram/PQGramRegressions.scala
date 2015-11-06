@@ -240,9 +240,9 @@ class PQGramRegressions extends FlatSpec with Matchers {
   val (p, q) = (2,3)
 
   "labeltuple union" should "takes the min-union" in {
-    val ops = PqOps[Label]()
-    val lt1 = ops.extend(arg0, p, q).subgraphs.map(g => ops.labelTuple(g, g.root)).map(_.mkString("-"))
-    val lt2 = ops.extend(arg1, p, q).subgraphs.map(g => ops.labelTuple(g, g.root)).map(_.mkString("-"))
-    ops.distance(lt1, lt2) shouldEqual ops.distance(lt2, lt1)
+    val ops = PqExtended
+    val p1 = ops.apply(arg0, p, q).profile
+    val p2 = ops.apply(arg1, p, q).profile
+    p1.distance(p2) shouldEqual p2.distance(p1)
   }
 }
