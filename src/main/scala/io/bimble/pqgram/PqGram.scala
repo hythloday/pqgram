@@ -1,20 +1,21 @@
 package io.bimble.pqgram
 
 import scala.reflect.runtime.universe._
-import scalax.collection.GraphEdge._
-import scalax.collection.GraphPredef._
 import scalax.collection.config.GraphConfig
 import scalax.collection.constrained._
+import scalax.collection.edge.Implicits._
+import scalax.collection.edge.LkDiEdge
+
 
 object Implicits {
   implicit val config: GraphConfig = dagConstraint
 
-  implicit class RichDag[N](d: DAG[N]) {
+  implicit class RichDag[N](d: MultiDAG[N]) {
     def root: N = d.nodes.filter(_.diPredecessors.isEmpty).head.value
   }
 }
 
-case class PQGram[N : CreatableOrdering : TypeTag : Labelled](t: DAG[N], p: Int, q: Int) {
+case class PQGram[N : TypeTag : Bounded : Labelled](t: MultiDAG[N], p: Int, q: Int) {
   import Implicits._
 
   /**
@@ -22,14 +23,14 @@ case class PQGram[N : CreatableOrdering : TypeTag : Labelled](t: DAG[N], p: Int,
     * extended tree Tpq that is isomorphic to the pq-gram pattern.
     * @return
     */
-  def subgraphs: Seq[DAG[N]] = t.nodes.toSeq.flatMap { node =>
+  def subgraphs: Seq[MultiDAG[N]] = t.nodes.toSeq.flatMap { node =>
     for {
       ancs <- node.diPredecessors.toSeq.sortBy(_.value).sliding(p - 1)
       descs <- node.diSuccessors.toSeq.sortBy(_.value).sliding(q)
     } yield {
       val nodes = (ancs.toSet ++ descs.toSet + node).map(_.value)
-      val edges = ancs.map(_.value ~> node.value) ++ descs.map(node.value ~> _.value)
-      DAG.from(nodes, edges)
+      val edges = ancs.map(a => (a.value ~+#> node.value)(0)) ++ descs.map(d => (node.value ~+#> d.value)(0))
+      MultiDAG.from(nodes, edges)
     }
   }
 
@@ -59,22 +60,20 @@ case class PQProfile(labelTuples: Seq[String]) {
 }
 
 trait PqGramOps {
-  private def extendRootNode[N : CreatableOrdering](root: N, p: Int) = for {
+  private def extendRootNode[N : Bounded](root: N, p: Int) = for {
     i <- 0 until p - 1
-  } yield implicitly[CreatableOrdering[N]].create ~> root
+  } yield (implicitly[Bounded[N]].infimum ~+#> root)(i)
 
-  private def extendLeafNode[N : CreatableOrdering](leaf: N, q: Int) = for {
+  private def extendLeafNode[N : Bounded](leaf: N, q: Int) = for {
     i <- 0 until q
-  } yield leaf ~> implicitly[CreatableOrdering[N]].create
+  } yield (leaf ~+#> implicitly[Bounded[N]].supremum)(i)
 
-  private def extendNonLeafNode[N : CreatableOrdering](node: DAG[N]#NodeT, q: Int) = for {
+  private def extendNonLeafNode[N : Bounded](node: DAG[N]#NodeT, q: Int): List[LkDiEdge[N]] = for {
     side <- List("before", "after")
     i <- 0 until q - 1
   } yield (side, node.diSuccessors.toSeq) match {
-    case ("before", Seq()) => node.value ~> implicitly[CreatableOrdering[N]].create
-    case ("before", xs) => node.value ~> implicitly[CreatableOrdering[N]].createLessThan(xs.map(_.value).min)
-    case ("after", Seq()) => node.value ~> implicitly[CreatableOrdering[N]].create
-    case ("after", xs) => node.value ~> implicitly[CreatableOrdering[N]].createGreaterThan(xs.map(_.value).max)
+    case ("before", xs) => (node.value ~+#> implicitly[Bounded[N]].infimum)(i)
+    case ("after", xs) => (node.value ~+#> implicitly[Bounded[N]].supremum)(i)
   }
 
   /**
@@ -90,28 +89,52 @@ trait PqGramOps {
     * @param q add q children to each leaf node in t
     * @return the extended tree
     */
-  def apply[N : Labelled : CreatableOrdering : TypeTag](tree: DAG[N], p: Int, q: Int): PQGram[N] = PQGram(tree ++ tree.nodes.foldLeft(List.empty[DiEdge[N]]) {
-    case (nodes, root) if root.diPredecessors.isEmpty =>
-      nodes ++ extendRootNode(root.value, p) ++ extendNonLeafNode(root, q)
-    case (nodes, leaf) if leaf.diSuccessors.isEmpty =>
-      nodes ++ extendLeafNode(leaf.value, q)
-    case (nodes, node) =>
-      nodes ++ extendNonLeafNode(node, q)
-  }, p, q)
+  def apply[N : Labelled : TypeTag : Bounded](tree: DAG[N], p: Int, q: Int): PQGram[N] = {
+    import Implicits._
+    val nTree = MultiDAG.from[N](Nil, tree.edges.toSeq.map{ e =>
+      (e.source.value ~+#> e.target.value)(0).edge
+    })
+
+    PQGram(nTree ++ tree.nodes.foldLeft(List.empty[LkDiEdge[N]]) {
+      case (nodes, root) if root.diPredecessors.isEmpty =>
+        nodes ++ extendRootNode(root.value, p) ++ extendNonLeafNode(root, q)
+      case (nodes, leaf) if leaf.diSuccessors.isEmpty =>
+        nodes ++ extendLeafNode(leaf.value, q)
+      case (nodes, node) =>
+        nodes ++ extendNonLeafNode(node, q)
+    }, p, q)
+  }
 
   /**
     * Definition 4.4 (Label-tuple) Let G be a pq-gram with the nodes V (G) = {v1, ... , vp, vp+1, ... , vp+q}, where vi
     * is the i-th node in preorder. The tuple l(G) = (l(v1), ... , l(vp), l(vp+1), ... , l(vp+q)) is called the
     * label-tuple of G.
     */
-  def labelTuple[N : Labelled : CreatableOrdering](tree: DAG[N]): List[String] = {
+  def labelTuple[N : Labelled : Bounded](tree: MultiDAG[N]): List[String] = {
     import Implicits._
+
+//    def edgeCompare(e1: MultiDAG[N]#EdgeT, e2: MultiDAG[N]#EdgeT): Int = {
+//      val ord = implicitly[Ordering[N]]
+//      val (s1, s2, t1, t2) = (e1.edge.source.value, e2.edge.source.value, e1.edge.target.value, e2.edge.target.value)
+//      (ord.compare(s1, s2), ord.compare(t1, t2)) match {
+//        case (cmp1, _) if cmp1 != 0 => cmp1
+//        case (_, cmp2) => cmp2
+//      }
+//    }
+//
+//    def edgeOrdering = tree.EdgeOrdering(edgeCompare)
+//    val traverser = tree.innerEdgeTraverser(tree get tree.root).withOrdering(edgeOrdering)
+//    val nodesOrdered = traverser.filter(edg => edg.source.diPredecessors.isEmpty).map(_.source.value).toList :::
+//      traverser.filter(edg => edg.source.diPredecessors.isEmpty).map(_.target.value).toList :::
+//      traverser.filter(edg => edg.target.diPredecessors.isEmpty).map(_.target.value).toList
+//    nodesOrdered.map(implicitly[Labelled[N]].label)
+
     def nodeOrdering = tree.NodeOrdering((l, r) => implicitly[Ordering[N]].compare(l.value, r.value))
-    val traverser = tree.outerNodeTraverser(tree get tree.root).withOrdering(nodeOrdering)
-    traverser.toList.map(implicitly[Labelled[N]].label)
+    val traverser2 = tree.outerNodeTraverser(tree get tree.root).withOrdering(nodeOrdering)
+    traverser2.toList.map(implicitly[Labelled[N]].label)
   }
 
-  def distance[N : Labelled : CreatableOrdering : TypeTag](t1: DAG[N], t2: DAG[N], p: Int, q: Int) =
+  def distance[N : Labelled : TypeTag : Bounded](t1: DAG[N], t2: DAG[N], p: Int, q: Int) =
     apply(t1, p, q).profile.distance(apply(t2, p, q).profile)
 }
 

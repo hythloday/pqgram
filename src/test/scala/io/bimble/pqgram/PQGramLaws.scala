@@ -50,11 +50,10 @@ class PQGramLaws extends PropSpec with Checkers {
 
   implicit val arbTree: org.scalacheck.Arbitrary[Graph[Label,GraphEdge.DiEdge]] = Arbitrary(tree)
 
-  implicit val ord = new CreatableOrdering[Label] {
-    override def compare(x: Label, y: Label): Int = x.i compare y.i
-    override def createLessThan(x: Label): Label = Label(Gen.uuid.sample.get, x.i - 1)
-    override def createGreaterThan(x: Label): Label = Label(Gen.uuid.sample.get, x.i + 1)
-    override def create: Label = Label(Gen.uuid.sample.get, 0)
+  implicit val boundedLabel = new Bounded[Label] {
+    override def infimum: Label = new Label(UUID.randomUUID(), Int.MinValue)
+    override def supremum: Label = new Label(UUID.randomUUID(), Int.MaxValue)
+    override def compareInner(l: Label, r: Label): Int = l.i compare r.i
   }
 
   case class PQ(p: Int, q: Int)
@@ -66,6 +65,9 @@ class PQGramLaws extends PropSpec with Checkers {
     check { (t1: DAG[Label], t2: DAG[Label], pq: PQ) =>
       val p1 = PqExtended(t1, pq.p, pq.q).profile
       val p2 = PqExtended(t2, pq.p, pq.q).profile
+      if (p1.distance(p2).isNaN) {
+        println(p1.distance(p2), p2.distance(p1))
+      }
       Prop(p1.distance(p2) == p2.distance(p1))
     }
   }

@@ -1,5 +1,8 @@
 package io.bimble
 
+import scalax.collection.constrained.{CompanionAlias, dagConstraint}
+import scalax.collection.edge.LkDiEdge
+
 
 package object pqgram {
   /**
@@ -10,14 +13,25 @@ package object pqgram {
   }
 
   /**
-    * Typeclass for suggesting that elements can be compared and created with lt/gt semantics
+    * Typeclass for indicating that a type has a supremum and an infimum, which compare greater-than and less-than
+    * with all inhabitatnts of the type.
     */
-  // TODO - eliminate and replace with BoundedT (with Infimum/T/Supremum inhabitants)
-  trait CreatableOrdering[N] extends Ordering[N] {
-    override def compare(x: N, y: N): Int
-    def createLessThan(x: N): N
-    def createGreaterThan(x: N): N
-    def create: N
+  trait Bounded[A] extends Ordering[A] {
+    def infimum: A
+    def supremum: A
+
+    def compareInner(x: A, y: A): Int
+
+    override def compare(x: A, y: A): Int =
+      if (x == infimum) -1
+      else if (y == infimum) 1
+      else if (x == supremum) 1
+      else if (y == supremum) -1
+      else compareInner(x, y)
   }
 
+  /** Default (immutable) directed acyclic `Graph`. */
+  type MultiDAG[N] = scalax.collection.constrained.Graph[N,LkDiEdge]
+  /** Companion module for default (immutable) directed acyclic `Graph`. */
+  object MultiDAG extends CompanionAlias[LkDiEdge](dagConstraint)
 }

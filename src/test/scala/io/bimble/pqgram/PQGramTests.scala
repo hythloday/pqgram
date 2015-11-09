@@ -6,6 +6,8 @@ import scalax.collection.GraphEdge.DiEdge
 import scalax.collection.GraphPredef._
 import scalax.collection.constrained._
 import scalax.collection.constrained.constraints.{Acyclic, Connected}
+import scalax.collection.edge.Implicits._
+import scalax.collection.edge.LkDiEdge
 
 sealed trait TestNode {
   def order: Int
@@ -15,17 +17,19 @@ case class LabelledNode(order: Int, label: String) extends TestNode
 class NullNode(val order: Int) extends TestNode { val label = "*" }
 
 object toDot {
-  def dump[N](d: DAG[N], name: String): String = {
+  def dump[N, E[X] <: EdgeLikeIn[X]](d: scalax.collection.constrained.Graph[N, E], name: String): String = {
     import scalax.collection.Graph
     import scalax.collection.io.dot._
     import implicits._
 
     val root = DotRootGraph(directed = true, id = Some(name))
-    def edgeTransformer(innerEdge: Graph[N, DiEdge]#EdgeT): Option[(DotGraph,DotEdgeStmt)] = innerEdge.edge match {
+    def edgeTransformer(innerEdge: Graph[N, E]#EdgeT): Option[(DotGraph,DotEdgeStmt)] = innerEdge.edge match {
       case DiEdge(source, target) =>
-        Some((root, DotEdgeStmt(source.toString, target.toString, Nil)))
+        Some((root, DotEdgeStmt(source.toString, target.toString, List(DotAttr("id", s"${source.toString} ~> ${target.toString}")))))
+      case LkDiEdge(source, target, key) =>
+        Some((root, DotEdgeStmt(source.toString, target.toString, List(DotAttr("id", key.toString)))))
     }
-    def nodeTransformer(innerNode: Graph[N, DiEdge]#NodeT): Option[(DotGraph, DotNodeStmt)] = innerNode.value match {
+    def nodeTransformer(innerNode: Graph[N, E]#NodeT): Option[(DotGraph, DotNodeStmt)] = innerNode.value match {
       case l@LabelledNode(order, label) => Some(root, DotNodeStmt(innerNode.toString, Seq(DotAttr("label", label))))
       case n: NullNode => Some(root, DotNodeStmt(innerNode.toString, Seq(DotAttr("label", "*"))))
     }
@@ -43,26 +47,33 @@ class PQGramTests extends FlatSpec with Matchers {
 
   import Implicits._
 
-  implicit object NodeLabeller extends Labelled[TestNode] {
+  implicit object TestNodeLabeller extends Labelled[TestNode] {
     override def label(a: TestNode): String = a.label
+  }
+  implicit object LabelledNodeLabeller extends Labelled[LabelledNode] {
+    override def label(a: LabelledNode): String = a.label
   }
 
   implicit object StringLabeller extends Labelled[String] {
     override def label(a: String): String = a
   }
 
-  implicit val ord = new CreatableOrdering[TestNode] {
-    override def compare(x: TestNode, y: TestNode): Int = x.order compare y.order
-    override def createLessThan(x: TestNode): TestNode = new NullNode(x.order - 1)
-    override def createGreaterThan(x: TestNode): TestNode = new NullNode(x.order + 1)
-    override def create: TestNode = new NullNode(0)
+  implicit object BoundedStrings extends Bounded[String] {
+    override val infimum = "__INFIMUM"
+    override val supremum = "__SUPREMUM"
+    override def compareInner(x: String, y: String): Int = x compare y
   }
 
-  implicit val ordStr = new CreatableOrdering[String] {
-    override def compare(x: String, y: String): Int = x compare y
-    override def createLessThan(x: String): String = "-"
-    override def createGreaterThan(x: String): String = "+"
-    override def create: String = "*"
+  implicit object BoundedTestNode extends Bounded[TestNode] {
+    override def infimum: TestNode = new NullNode(Int.MinValue)
+    override def supremum: TestNode = new NullNode(Int.MaxValue)
+    override def compareInner(x: TestNode, y: TestNode): Int = x.order compare y.order
+  }
+
+  implicit object BoundedLabelledNode extends Bounded[LabelledNode] {
+    override def infimum: LabelledNode = new LabelledNode(Int.MinValue, "*")
+    override def supremum: LabelledNode = new LabelledNode(Int.MaxValue, "*")
+    override def compareInner(x: LabelledNode, y: LabelledNode): Int = x.order compare y.order
   }
 
   implicit val conf: Config = Connected && Acyclic
@@ -107,9 +118,9 @@ class PQGramTests extends FlatSpec with Matchers {
   "pqgram-pattern" should "recognize a tree of the right shape" in {
     val (p1, p2, p3, p4, p5) = ("p1", "p2", "p3", "p4", "p5")
 
-    val t = DAG.from(
+    val t = MultiDAG.from(
       List(p1, p2, p3, p4, p5),
-      List(p1 ~> p2, p2 ~> p3, p2 ~> p4, p2 ~> p5)
+      List((p1 ~+#> p2)(0), (p2 ~+#> p3)(0), (p2 ~+#> p4)(0), (p2 ~+#> p5)(0))
     )
 
     PQGram(t, 2, 3).subgraphs shouldEqual Seq(t)
@@ -119,9 +130,9 @@ class PQGramTests extends FlatSpec with Matchers {
     val (o1, v1, o2, o3, v2) = (LabelledNode(1, "*"), LabelledNode(2, "a"), LabelledNode(3, "*"), LabelledNode(4, "*"),
       LabelledNode(5, "a"))
 
-    val t = DAG.from[TestNode](
+    val t = MultiDAG.from(
       List(o1, v1, o2, o3, v2),
-      List(o1 ~> v1, v1 ~> o2, v1 ~> o3, v1 ~> v2)
+      List((o1 ~+#> v1)(0), (v1 ~+#> o2)(0), (v1 ~+#> o3)(0), (v1 ~+#> v2)(0))
     )
 
     PqExtended.labelTuple(t).mkString shouldEqual "*a**a"
