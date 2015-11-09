@@ -7,7 +7,7 @@ name := "pqgram"
 
 organization := "io.bimble"
 
-version := "0.1"
+version := "0.2-SNAPSHOT"
 
 libraryDependencies ++= Seq(
   "com.assembla.scala-incubator" %% "graph-core" % "1.9.4",
